@@ -1,0 +1,116 @@
+import requests  # для отправки HTTP-запросов
+from bs4 import BeautifulSoup  # для парсинга HTML
+import pandas as pd  # для работы с таблицами данных
+
+# Функция парсинга новостей
+def parse_news(news_count=10):
+    url = "https://ria.ru/"
+
+    try:
+        response = requests.get(url) # Отправляем запрос к сайту
+        soup = BeautifulSoup(response.content, 'html.parser') # Создаем объект для парсинга HTML
+        news_list = []
+
+        # Ищем все новостные блоки на РИА Новости
+        news_items = soup.find_all('a', class_=lambda x: x and ('list-item' in x or 'cell' in x or 'media' in x))
+
+        # Перебираем найденные новостные блоки
+        for item in news_items:
+            if len(news_list) >= news_count: # Проверяем, не собрали ли уже нужное количество новостей
+                break
+
+            try:
+                # Извлекаем заголовок новости
+                title_elem = item.find(['span', 'div', 'h2'])  # ищем в различных тегах
+                if title_elem:  # если заголовок найден
+                    title = title_elem.get_text(strip=True)  # извлекаем текст без пробелов
+                    
+                    # Пропускаем короткие или неинформативные заголовки
+                    if len(title) < 10:
+                        continue
+
+                    # Извлекаем ссылку на новость
+                    link = item.get('href')  # получаем атрибут href
+                    # Если ссылка относительная, делаем ее абсолютной
+                    if link and not link.startswith('http'):
+                        link = 'https://ria.ru' + link
+
+                    # Парсим полный текст новости по ссылке
+                    if link and link.startswith('https://ria.ru/'):
+                      full_text = parse_full_text(link)
+                    else:
+                      full_text = ""
+
+                    # Добавляем данные новости в список
+                    news_list.append({
+                        'title': title,  # заголовок
+                        'link': link,  # ссылка
+                        'full_text': full_text  # полный текст
+                    })
+
+            except Exception as e:  # если ошибка при обработке одной новости
+                continue  # пропускаем эту новость и идем к следующей
+
+        # Преобразуем список в DataFrame и возвращаем
+        return pd.DataFrame(news_list)
+
+    except Exception as e:  # если ошибка на уровне всей функции
+        print(f"Ошибка: {e}")  # выводим сообщение об ошибке
+        return pd.DataFrame()  # возвращаем пустой DataFrame
+
+# Функция для парсинга полного текста новости
+def parse_full_text(url):
+    # Парсим полный текст новости по ссылке
+    try:
+        response = requests.get(url, timeout=5) # Отправляем запрос к странице новости с таймингом 5 секунд
+        soup = BeautifulSoup(response.content, 'html.parser') # Парсим HTML страницы новости
+
+        # Ищем текстовые блоки новости на РИА Новости
+        text_blocks = soup.find_all('div', class_=lambda x: x and 'article__body' in x)
+        
+        # Если не нашли, пробуем другие возможные классы
+        if not text_blocks:
+            text_blocks = soup.find_all('div', class_=lambda x: x and 'article__text' in x)
+        
+        if not text_blocks:
+            text_blocks = soup.find_all('div', class_=lambda x: x and 'lenta' in x)
+
+        # Объединяем текст из всех блоков в одну строку
+        full_text = ' '.join([block.get_text(strip=True) for block in text_blocks])
+        return full_text[:500]  # возвращаем первые 500 символов текста
+
+    except:  # если любая ошибка при парсинге текста
+        return ""  # возвращаем пустую строку
+
+# Основная программа (запускается только при прямом запуске файла)
+if __name__ == "__main__":
+    # Ввод количества новостей с клавиатуры с проверкой
+    while True:  # бесконечный цикл для ввода
+        try:
+            # Запрашиваем ввод числа от пользователя
+            count = int(input("Введите количество новостей для парсинга: "))
+            # Проверяем что число положительное
+            if count > 0:
+                break  # выходим из цикла если число корректное
+            else:
+                print("Число должно быть больше 0!")  # сообщение об ошибке
+        except ValueError:  # если введено не число
+            print("Пожалуйста, введите целое число!")  # сообщение об ошибке
+
+    df = parse_news(count)  #парсим новости и сохраняем результат в переменную df
+
+    # Выводим результаты парсинга
+    print(f"\nУспешно собрано {len(df)} новостей:")  # кол-во собранных новостей
+
+    # Перебираем все новости в DataFrame
+    for i, row in df.iterrows():  # iterrows() возвращает индекс и строку
+        print(f"{i+1}. {row['title']}")  # выводим номер и заголовок новости
+        print(f"   Ссылка: {row['link']}")  # выводим ссылку
+        # Если есть полный текст новости
+        if row['full_text']:
+            print(f"   Текст: {row['full_text'][:100]}...")  # выводим первые 100 символов
+        print()  # пустая строка для разделения
+
+    # Сохраняем данные в CSV файл
+    df.to_csv('ria_news.csv', index=False, encoding='utf-8')  # сохраняем без индексов в UTF-8
+    print(f"Данные сохранены в файл 'ria_news.csv'")
